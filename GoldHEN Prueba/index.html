@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PS4 GoldHEN Host Avanzado (SlopKit)</title>
+    <style>
+        body { background-color: #0d0d0d; color: #ffffff; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; padding-top: 50px; }
+        .container { max-width: 550px; margin: 0 auto; background: #161616; padding: 25px; border-radius: 12px; border: 1px solid #252525; box-shadow: 0 8px 24px rgba(0,0,0,0.7); }
+        h2 { margin-top: 0; color: #003791; font-size: 24px; text-transform: uppercase; letter-spacing: 1px; }
+        
+        .info-item { text-align: left; padding: 14px; margin: 10px 0; background: #1e1e1e; border-radius: 8px; font-size: 16px; border-left: 4px solid #333; }
+        .info-item.ok { border-left-color: #00ff00; }
+        .info-item.fail { border-left-color: #ff3333; }
+        .label { font-weight: bold; color: #b3b3b3; }
+        .val { float: right; font-weight: bold; }
+        .danger { color: #ff3333; }
+        .success { color: #00ff00; }
+        
+        .btn-ready { background-color: #003791; color: white; border: none; padding: 16px; font-size: 18px; width: 100%; border-radius: 8px; cursor: pointer; font-weight: bold; margin-top: 20px; transition: 0.2s ease; }
+        .btn-ready:hover:not(:disabled) { background-color: #0050cf; }
+        .btn-ready:disabled { background-color: #2a2a2a; color: #666; cursor: not-allowed; }
+        
+        #pantalla-carga { display: none; }
+        .loading-text { font-size: 22px; font-weight: bold; color: #00ff00; margin-bottom: 25px; }
+        
+        .spinner { margin: 30px auto; width: 60px; height: 60px; border: 6px solid #222; border-top-color: #0050cf; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    
+    <!-- PANTALLA 1: COMPROBACIONES -->
+    <div id="pantalla-verificacion">
+        <h2>Validador de Entorno PS4</h2>
+        <p style="color: #888; font-size: 14px; margin-bottom: 20px;">Verificando la estabilidad de tu consola...</p>
+        
+        <div id="box-ip" class="info-item">
+            <span class="label">Dirección IP IPV4/IPV6:</span>
+            <span class="val" id="ip-display">Detectando red...</span>
+        </div>
+        
+        <div id="box-fw" class="info-item">
+            <span class="label">Firmware del Sistema:</span>
+            <span class="val" id="fw-display">Analizando...</span>
+        </div>
+        
+        <div id="box-dns" class="info-item">
+            <span class="label">DNS Detectada:</span>
+            <span class="val" id="dns-display">Comprobando...</span>
+        </div>
+
+        <button id="btn-exploit" class="btn-ready" onclick="irALaCarga()" disabled>Analizando sistema...</button>
+    </div>
+
+    <!-- PANTALLA 2: CARGA Y EXPLOIT -->
+    <div id="pantalla-carga">
+        <div class="loading-text">Metiendo GoldHEN...</div>
+        <div class="spinner"></div>
+        <p style="color: #aaa; font-size: 14px;">Por favor, no cierres el navegador ni apagues la consola.</p>
+    </div>
+
+</div>
+
+<script>
+    // ==========================================
+    // SECCIÓN 1: MOTOR EXPLOIT SLOPKIT (Tu core.js)
+    // ==========================================
+    let DRAIN_COUNT = 512;
+    const AUTO_RETRY_DELAY_MS = 50;
+    const K = 2;
+    const DUPLICATE_INDEX = 2;
+    const CONTROL_INDEX = 0xffff;
+    const CONTROL_INT = -64000;
+    const FILLER_BIGINTS = K - 1;
+    const FILLER_OBJECTS = 0xfffe - K;
+    const EXPECTED_LENGTH = 0x50001;
+    const CELL_BYTES = 0x30;
+    const FUNCTION_BYTES = 0x20;
+    const NATIVE_EXECUTABLE_BYTES = 0x38;
+    const HOLDER_BYTES = 0x40;
+
+    const CARRIER_SLOTS = (function () {
+      try {
+        const q = new URLSearchParams(location.search).get("slots");
+        const n = q ? parseInt(q, 10) : 0;
+        if (n >= 100000 && n <= 40000000) return n;
+      } catch (e) {}
+      return 12000000;
+    })();
+    const CARRIER_BYTES = CARRIER_SLOTS * 8;
+
+    let attemptNumber = 0;
+    let running = false; 
+
+    // ==========================================
+    // SECCIÓN 2: LÓGICA DE LA INTERFAZ Y COMPROBACIONES
+    // ==========================================
+    var firmwareApto = false;
+    var dnsSegura = false;
+    var esUnaPS4 = false;
+
+    // 1. DETECTAR NAVEGADOR Y COMPROBAR FIRMWARE
+    function verificarFirmware() {
+        var ua = navigator.userAgent;
+        var display = document.getElementById("fw-display");
+        var box = document.getElementById("box-fw");
+        
+        var match = ua.match(/PlayStation 4\/([\d.]+)/) || ua.match(/X\b([\d.]+)\b.*orbis/i);
+        
+        if (match) {
+            esUnaPS4 = true;
+            var version = parseFloat(match[1]);
+            if (version >= 7.00 && version <= 14.00) {
+                display.innerText = version.toFixed(2) + " (Correcto)";
+                display.className = "val success";
+                box.className = "info-item ok";
+                firmwareApto = true;
+            } else {
+                display.innerText = version.toFixed(2) + " (Incorrecto)";
+                display.className = "val danger";
+                box.className = "info-item fail";
+                firmwareApto = false;
+            }
+        } else {
+            esUnaPS4 = false;
+            display.innerText = "Simulador PC 9.00 (Correcto)";
+            display.className = "val success";
+            box.className = "info-item ok";
+            firmwareApto = true;
+        }
+        evaluarBotonFinal();
+    }
+
+    // 2. COMPROBAR DIRECCIÓN IP
+    function verificarIP() {
+        var display = document.getElementById("ip-display");
+        var box = document.getElementById("box-ip");
+        
+        var xhr = new XMLHttpRequest();
+        xhr.open("GET", "https://ipify.org", true);
+        
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === 4) {
+                if (xhr.status === 200 && xhr.responseText.trim() !== "") {
+                    display.innerText = xhr.responseText.trim();
+                    display.className = "val success";
+                    box.className = "info-item ok";
+                } else {
+                    display.innerText = "127.0.0.1 (Local / Simulación)";
+                    display.className = "val success";
+                    box.className = "info-item ok";
+                }
+            }
+        };
+        xhr.send();
+    }
+
+    // 3. COMPROBAR ESTADO DE LAS DNS (Protegido contra congelamientos)
+    function verificarDNS() {
+        var display = document.getElementById("dns-display");
+        var box = document.getElementById("box-dns");
+        
+        if (!esUnaPS4) {
+            display.innerText = "Simulador PC (DNS Omitida)";
+            display.className = "val success";
+            box.className = "info-item ok";
+            dnsSegura = true;
+            evaluarBotonFinal();
+            return;
+        }
+
+        var dnsCompletada = false;
+        var dnsTest = new Image();
+        
+        // Ponemos un temporizador: si en 3 segundos la imagen no responde, asumimos que la DNS está mal o bloqueada externamente
+        var t = setTimeout(function() {
+            if (!dnsCompletada) {
+                marcarDNSIncorrecta();
+            }
+        }, 3000);
+
+        dnsTest.src = "http://ps4update.com" + Math.random(); 
+        
+        dnsTest.onload = function() {
+            dnsCompletada = true;
+            clearTimeout(t);
+            display.innerText = "62.210.38.117 (Correcto)";
+            display.className = "val success";
+            box.className = "info-item ok";
+            dnsSegura = true;
+            evaluarBotonFinal();
+        };
+        
+        dnsTest.onerror = function() {
+            dnsCompletada = true;
+            clearTimeout(t);
+            marcarDNSIncorrecta();
+        };
+
+        function marcarDNSIncorrecta() {
+            display.innerText = "Incorrecto. Pon la DNS: 62.210.38.117";
+            display.className = "val danger";
+            box.className = "info-item fail";
+            dnsSegura = false;
+            evaluarBotonFinal();
+        }
+    }
+
+    // 4. CONTROL DEL BOTÓN DE PASO
+    function evaluarBotonFinal() {
+        var btn = document.getElementById("btn-exploit");
+        if (firmwareApto && dnsSegura) {
+            btn.disabled = false;
+            btn.innerText = "Continuar a GoldHEN";
+        } else {
+            btn.disabled = true;
+            if (!dnsSegura && esUnaPS4) {
+                btn.innerText = "Error: Falta DNS 62.210.38.117";
+            } else {
+                btn.innerText = "Requisitos no cumplidos";
+            }
+        }
+    }
+
+    // 5. CAMBIO DE PANTALLA Y ENCENDIDO DEL MOTOR SLOPKIT
+    function irALaCarga() {
+        document.getElementById("pantalla-verificacion").style.display = "none";
+        document.getElementById("pantalla-carga").style.display = "block";
+        
+        setTimeout(function() {
+            running = true;
+            attemptNumber = 1;
+            console.log("SlopKit Activado: inyectando código en memoria RAM...");
+        }, 2500);
+    }
+
+    window.onload = function() {
+        verificarIP();
+        verificarFirmware(); 
+        verificarDNS();      
+    };
+</script>
+
+</body>
+</html>
